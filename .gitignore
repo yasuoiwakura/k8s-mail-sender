@@ -1,0 +1,23 @@
+# Local PoC data and secrets
+docker-compose/docker-data/
+docker-compose/secrets/
+docker-compose/config/postfix-accounts.cf
+
+# Generated or downloaded keys
+*.private
+*.key
+*.pem
+!**/*.example
+
+# Certificates extracted from Traefik
+dms-tls/
+
+# Python
+__pycache__/
+*.pyc
+
+# Operating system / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: dms-data
+  namespace: mail
+  labels:
+    app.kubernetes.io/name: dms
+    app.kubernetes.io/part-of: mail
+  annotations:
+    # ArgoCD must not delete the data accidentally.
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 5Gi

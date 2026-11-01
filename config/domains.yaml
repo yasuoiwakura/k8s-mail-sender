@@ -1,0 +1,39 @@
+# Single source of truth for sender domains and central mail server settings.
+#
+# Changes here are translated by scripts/generate.py into Postfix maps,
+# DKIM domain lists and DNS checklists.
+#
+# Important:
+# - Only domains go here, never sender addresses.
+# - The local part of a sender address is arbitrary.
+# - The central SMTP account deliberately lives on the technical hostname domain
+#   (mail.example.com). This keeps any of the real sender domains from being
+#   treated as "local" by Postfix.
+
+domains:
+  - example.org
+  - example.net
+  - example.com
+  - example.info
+
+mail:
+  # HELO/PTR hostname of the server; must match the A record, PTR and TLS certificate.
+  # Mail clients can use mail.example.com instead (CNAME + certificate SAN).
+  hostname: mx.example.com
+
+  # Central SMTP AUTH account. Not a sender, only a login identity.
+  auth_account: smtp@mail.example.com
+
+  # DKIM selector. Before the first deployment, check whether this selector
+  # is already in use for any domain.
+  dkim_selector: dms
+
+  # The envelope sender is rewritten to this address so that all
+  # bounces/DSNs reliably arrive through the external forwarding.
+  # The domain must NOT be in the DMS account file, otherwise it would be local.
+  bounce_address: bounces@example.org
+  postmaster_address: bounces@example.org
+
+  # IPv4 only for the MVP. If IPv6 is used, AAAA, PTR and SPF must be
+  # extended consistently.
+  inet_protocols: ipv4

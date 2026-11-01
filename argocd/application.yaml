@@ -1,0 +1,30 @@
+# ArgoCD Application for this repository.
+#
+# Adjust repoURL. If the Application lives in the homelab repo instead,
+# this file can serve as a template and does not need to be applied here.
+#
+# Before the sync the Secrets `dms-account` and `dms-tls` must exist in the
+# `mail` namespace (see scripts/bootstrap-secrets.sh).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: mail
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: mail
+spec:
+  project: default
+  source:
+    repoURL: REPLACE_WITH_GITEA_REPOSITORY_URL
+    # Adjust the branch; after the merge this is usually main.
+    targetRevision: main
+    path: manifests
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: mail
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

@@ -1,0 +1,210 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dms
+  namespace: mail
+  labels:
+    app.kubernetes.io/name: dms
+    app.kubernetes.io/component: mailserver
+    app.kubernetes.io/part-of: mail
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  revisionHistoryLimit: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: dms
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: dms
+        app.kubernetes.io/component: mailserver
+        app.kubernetes.io/part-of: mail
+    spec:
+      terminationGracePeriodSeconds: 60
+      initContainers:
+        - name: bootstrap
+          image: mailserver/docker-mailserver:16.0.1
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/bash
+            - -euc
+          args:
+            - |
+              set -euo pipefail
+
+              install -d -m 0700 /tmp/docker-mailserver/opendkim/keys
+              install -m 0600 /bootstrap/postfix-accounts.cf /tmp/docker-mailserver/postfix-accounts.cf
+
+              touch /tmp/docker-mailserver/opendkim/KeyTable
+              touch /tmp/docker-mailserver/opendkim/SigningTable
+              if [ ! -s /tmp/docker-mailserver/opendkim/TrustedHosts ]; then
+                printf '127.0.0.1\nlocalhost\n' > /tmp/docker-mailserver/opendkim/TrustedHosts
+              fi
+
+              command -v opendkim-genkey >/dev/null 2>&1 || {
+                echo "opendkim-genkey not found in image" >&2
+                exit 1
+              }
+
+              while IFS= read -r domain; do
+                [ -n "$domain" ] || continue
+                keydir="/tmp/docker-mailserver/opendkim/keys/$domain"
+                if [ ! -f "$keydir/dms.private" ]; then
+                  install -d -m 0700 "$keydir"
+                  opendkim-genkey \
+                    --bits=2048 \
+                    --subdomains \
+                    --domain="$domain" \
+                    --selector=dms \
+                    --directory="$keydir"
+                  chmod 0600 "$keydir/dms.private"
+                fi
+
+                grep -Fq "dms._domainkey.$domain " /tmp/docker-mailserver/opendkim/KeyTable || \
+                  echo "dms._domainkey.$domain $domain:dms:/etc/opendkim/keys/$domain/dms.private" \
+                    >> /tmp/docker-mailserver/opendkim/KeyTable
+
+                grep -Fq "*@$domain " /tmp/docker-mailserver/opendkim/SigningTable || \
+                  echo "*@$domain dms._domainkey.$domain" \
+                    >> /tmp/docker-mailserver/opendkim/SigningTable
+              done < /bootstrap/domains.txt
+          envFrom:
+            - configMapRef:
+                name: dms-env
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          volumeMounts:
+            - name: data
+              mountPath: /tmp/docker-mailserver
+              subPath: config
+            - name: account
+              mountPath: /bootstrap/postfix-accounts.cf
+              subPath: postfix-accounts.cf
+              readOnly: true
+            - name: files
+              mountPath: /bootstrap/domains.txt
+              subPath: domains.txt
+              readOnly: true
+      containers:
+        - name: dms
+          image: mailserver/docker-mailserver:16.0.1
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: dms-env
+          ports:
+            - name: smtp
+              containerPort: 25
+              protocol: TCP
+            - name: submissions
+              containerPort: 465
+              protocol: TCP
+            - name: submission
+              containerPort: 587
+              protocol: TCP
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+            runAsNonRoot: false
+            allowPrivilegeEscalation: true
+            readOnlyRootFilesystem: false
+            privileged: false
+            capabilities:
+              add:
+                - CHOWN
+                - FOWNER
+                - MKNOD
+                - SETGID
+                - SETUID
+                - DAC_OVERRIDE
+                - NET_BIND_SERVICE
+                - SYS_CHROOT
+                - KILL
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          startupProbe:
+            exec:
+              command:
+                - dms-healthcheck
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            exec:
+              command:
+                - dms-healthcheck
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command:
+                - dms-healthcheck
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          volumeMounts:
+            - name: data
+              mountPath: /tmp/docker-mailserver
+              subPath: config
+            - name: data
+              mountPath: /var/mail-state
+              subPath: state
+            - name: data
+              mountPath: /var/mail
+              subPath: mail
+            - name: data
+              mountPath: /var/log/mail
+              subPath: log
+            - name: files
+              mountPath: /tmp/docker-mailserver/postfix-main.cf
+              subPath: postfix-main.cf
+              readOnly: true
+            - name: files
+              mountPath: /tmp/docker-mailserver/postfix-master.cf
+              subPath: postfix-master.cf
+              readOnly: true
+            - name: files
+              mountPath: /tmp/docker-mailserver/sender_domains
+              subPath: sender_domains
+              readOnly: true
+            - name: files
+              mountPath: /tmp/docker-mailserver/from_domains.pcre
+              subPath: from_domains.pcre
+              readOnly: true
+            - name: files
+              mountPath: /tmp/docker-mailserver/sender_canonical.pcre
+              subPath: sender_canonical.pcre
+              readOnly: true
+            - name: tls
+              mountPath: /secrets/tls
+              readOnly: true
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: dms-data
+        - name: account
+          secret:
+            secretName: dms-account
+        - name: files
+          configMap:
+            name: dms-files
+        - name: tls
+          secret:
+            secretName: dms-tls
